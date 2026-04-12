@@ -443,9 +443,13 @@ if __name__ == '__main__':
     logging.info(f"ngpus_per_node: {ngpus_per_node}")
 
     # logging for multiprocessing
-    log_queue = setup_primary_logging(log_filename, "error.log")
+    log_queue, log_listener = setup_primary_logging(log_filename, "error.log")
 
-    main(ngpus_per_node)
+    try:
+        main(ngpus_per_node)
+    finally:
+        # Properly stop the logging listener to avoid thread crash on exit
+        log_listener.stop()
 
 
 def send_recv(model,gpu,rank,world_size):

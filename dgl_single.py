@@ -102,7 +102,7 @@ def main(ngpus_per_node):
         mp.spawn(run, nprocs=ngpus_per_node,
                  args=(ngpus_per_node, args, log_queue))
     else:
-        run(0, ngpus_per_node, args)
+        run(0, ngpus_per_node, args, log_queue)
         # sys.exit(-1)
 
 
@@ -172,6 +172,8 @@ def run(gpu, ngpus_per_node, args, log_queue):
         args.n_classes = 60
     elif 'uk' in args.dataset:
         args.n_classes = 60
+    elif 'test_dataset' in args.dataset:
+        args.n_classes = 10
     else:
         raise Exception("ERRO: Unsupported dataset.")
     if args.model_name == 'gcn':
@@ -396,7 +398,11 @@ if __name__ == '__main__':
     ngpus_per_node = 1
     
     # logging for multiprocessing
-    log_queue = setup_primary_logging(log_filename, "error.log")
+    log_queue, log_listener = setup_primary_logging(log_filename, "error.log")
 
     # main function
-    main(ngpus_per_node)
+    try:
+        main(ngpus_per_node)
+    finally:
+        # Properly stop the logging listener to avoid thread crash on exit
+        log_listener.stop()

@@ -197,7 +197,7 @@ For CPU-only environments (no NVIDIA driver/GPU), run with `--cpu`:
 
 ```bash
 # single-node CPU example
-python dgl_single.py --dataset ./dist/repgnn_data/ogbn_arxiv0 --sampling 2-2-2 --model-name graphsage --world-size 1 --rank 0 --cpu
+python dgl_single.py --dataset ./dist/repgnn_data/ogbn_arxiv0 --sampling 2-2-2 --model-name graphsage --world-size 1 --cpu
 ```
 
 For 2-node CPU runs, launch the same command on each node with `--world-size 2`, `--rank 0/1`, shared `--dist-url`, and `--cpu`.

@@ -49,7 +49,7 @@ from common.log import setup_primary_logging, setup_worker_logging
 #         self.stopped = True
         
 from dgl.frame import Frame, FrameRef
-def fetch_data(gpuid,feat, nodeflow):
+def fetch_data(device, feat, nodeflow):
     feat_dim = feat.shape[1]
     dims = {'features':feat_dim}
     with torch.autograd.profiler.record_function('get nf_nids'):
@@ -76,10 +76,10 @@ def fetch_data(gpuid,feat, nodeflow):
             for name in dims:
                 frame[name].data = torch.frombuffer(features, dtype=torch.float32).reshape(len(tnid), feat_dim)
         
-        with torch.autograd.profiler.record_function('move feats from CPU to GPU'):
-            # move features from cpu memory to gpu memory
+        with torch.autograd.profiler.record_function('move feats from CPU to device'):
+            # move features from cpu memory to target device memory
             for name in dims:
-                frame[name].data = frame[name].data.cuda(gpuid)
+                frame[name].data = frame[name].data.to(device)
         # attach features to nodeflow
         with torch.autograd.profiler.record_function('asign frame to nodeflow'):
             logging.debug(f'Final nodeflow._node_frames:{i}, frame["features"].size(): {frame["features"].size()}\n')
@@ -122,16 +122,12 @@ def run(gpu, ngpus_per_node, args, log_queue):
     
     #################### 构建GNN分布式训练环境 ####################
     dist_init_method = args.dist_url
-    if torch.cuda.device_count() < 1:
+    if args.cpu or not torch.cuda.is_available() or torch.cuda.device_count() < 1:
         device = torch.device('cpu')
-        # torch.distributed.init_process_group(
-        #     backend='gloo', init_method=dist_init_method, world_size=args.world_size, rank=args.rank)
         logging.info(f'Using CPU for training...')
     else:
         torch.cuda.set_device(args.gpu)
         device = torch.device('cuda:' + str(args.rank))
-        # torch.distributed.init_process_group(
-        #     backend='gloo', init_method=dist_init_method, world_size=args.world_size, rank=args.rank)
         logging.info(f'Using {args.world_size} distributed GPUs in total for training...')
     
     #################### 读取全图中的训练点id、计算每个gpu需要训练的nid数量、根据全图topo构建dglgraph，用于后续sampling ####################
@@ -195,7 +191,7 @@ def run(gpu, ngpus_per_node, args, log_queue):
     loss_fn = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay,eps=1e-5)
-    model.cuda(args.gpu)
+    model = model.to(device)
     # model = torch.nn.parallel.DistributedDataParallel(
     #     model, device_ids=[args.gpu])
     max_acc = 0
@@ -205,7 +201,8 @@ def run(gpu, ngpus_per_node, args, log_queue):
     # monitor = Monitor(0.1)
 
     #################### GNN训练 ####################
-    with torch.autograd.profiler.profile(enabled=(args.gpu == 0), use_cuda=True) as prof:
+    use_cuda_profiler = device.type == 'cuda'
+    with torch.autograd.profiler.profile(enabled=(args.gpu == 0), use_cuda=use_cuda_profiler) as prof:
         with torch.autograd.profiler.record_function('total epochs time'):
             for epoch in range(args.epoch):
                 with torch.autograd.profiler.record_function('train data prepare'):
@@ -229,11 +226,11 @@ def run(gpu, ngpus_per_node, args, log_queue):
                     # print(f'iter: {iter}')
                     with torch.autograd.profiler.record_function('fetch feat'):
                         # 将nf._node_frame中填充每层神经元的node Frame (一个frame是一个字典，存储feat)
-                        fetch_data(gpu,feat,nf)
+                        fetch_data(device, feat, nf)
                     batch_nid = nf.layer_parent_nid(-1)
                     with torch.autograd.profiler.record_function('fetch label'):
-                        labels = fg_labels[batch_nid].cuda(
-                            args.gpu, non_blocking=True)
+                        labels = fg_labels[batch_nid].to(
+                            device, non_blocking=(device.type == 'cuda'))
                     with torch.autograd.profiler.record_function('gpu-compute with optimizer.step'):
                         # each_sub_iter_nsize.append(nf._node_mapping.tousertensor().size(0))
                         with torch.autograd.profiler.record_function('DDP forward'):
@@ -273,10 +270,10 @@ def run(gpu, ngpus_per_node, args, log_queue):
                                                                 add_self_loop=True):
                         model.eval()
                         with torch.no_grad():
-                            fetch_data(gpu,feat,nf)
+                            fetch_data(device, feat, nf)
                             pred = model(nf)
                             batch_nids = nf.layer_parent_nid(-1)
-                            batch_labels = fg_labels[batch_nids].cuda(args.gpu)
+                            batch_labels = fg_labels[batch_nids].to(device)
                             num_acc += (pred.argmax(dim=1) == batch_labels).sum().cpu().item()
                     max_acc = max(num_acc / len(test_nid),max_acc)
                     logging.info(f'Epoch: {epoch}, Test Accuracy {num_acc / len(test_nid)}')
@@ -285,7 +282,8 @@ def run(gpu, ngpus_per_node, args, log_queue):
     if args.eval:
         logging.info(f'Max acc:{max_acc}')
     if not args.eval:
-        logging.info(prof.key_averages().table(sort_by='cuda_time_total'))
+        sort_key = 'cuda_time_total' if device.type == 'cuda' else 'cpu_time_total'
+        logging.info(prof.key_averages().table(sort_by=sort_key))
     logging.info(
         f'wait sampler total time: {sum(wait_sampler)}, total iters: {len(wait_sampler)}, avg iter time:{sum(wait_sampler)/len(wait_sampler)}')
     # logging.info(f'gpu util:{monitor.load}')
@@ -332,6 +330,8 @@ def parse_args_func(argv):
                         help='node rank for distributed training')
     parser.add_argument('--gpu', default=None, type=int,
                         help='GPU id to use.')
+    parser.add_argument('--cpu', action='store_true',
+                        help='force CPU execution even when CUDA is available')
     parser.add_argument('--grpc-port', default="10.5.30.43:18110", type=str,
                         help='grpc port to connect with cache servers.')
     # args for deepergcn

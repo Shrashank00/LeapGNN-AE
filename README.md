@@ -193,6 +193,15 @@ To run a simple GNN training on the small arxiv dataset within 5 minutes.
 
 The command first invokes `servers_start.py` located in the `auto_test` directory to automatically launch `dist/server.go` on each node, thereby setting up the distributed feature caching system. Subsequently, the command automatically calls `clients_start.py` to initiate the corresponding client GNN training system on each node.
 
+For CPU-only environments (no NVIDIA driver/GPU), run with `--cpu`:
+
+```bash
+# single-node CPU example
+python dgl_single.py --dataset ./dist/repgnn_data/ogbn_arxiv0 --sampling 2-2-2 --model-name graphsage --world-size 1 --cpu
+```
+
+For 2-node CPU runs, launch the same command on each node with `--world-size 2`, `--rank 0/1`, shared `--dist-url`, and `--cpu`.
+
 **Note**:
 - `cd auto_test`; Use `python3 servers_kill.py` and `python3 clients_kill.py` to terminate all server and client processes across the nodes.
 

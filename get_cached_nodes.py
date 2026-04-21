@@ -520,7 +520,11 @@ if __name__ == '__main__':
     ngpus_per_node = 1
     
     # logging for multiprocessing
-    log_queue = setup_primary_logging(log_filename, "error.log")
+    log_queue, log_listener = setup_primary_logging(log_filename, "error.log")
 
-    # main function
-    main(ngpus_per_node)
+    try:
+        # main function
+        main(ngpus_per_node)
+    finally:
+        # Properly stop the logging listener to avoid thread crash on exit
+        log_listener.stop()

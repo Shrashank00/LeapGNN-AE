@@ -8,7 +8,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.multiprocessing import Queue
 
-def setup_primary_logging(log_file_path: str, error_log_file_path: str) -> Queue:
+def setup_primary_logging(log_file_path: str, error_log_file_path: str):
     """
     Global logging is setup using this method. In a distributed setup, a multiprocessing queue is setup
     which can be used by the workers to write their log messages. This initializers respective handlers
@@ -24,7 +24,8 @@ def setup_primary_logging(log_file_path: str, error_log_file_path: str) -> Queue
     log_queue : ``torch.multiprocessing.Queue``
         A log queue to which the log handler listens to. This is used by workers
         in a distributed setup to initialize worker specific log handlers(refer ``setup_worker_logging`` method).
-        Messages posted in this queue by the workers are picked up and bubbled up to respective log handlers.
+    listener : ``logging.handlers.QueueListener``
+        The listener object that should be stopped when the program exits.
     """
     # Multiprocessing queue to which the workers should log their messages
     log_queue = Queue(-1)
@@ -47,7 +48,7 @@ def setup_primary_logging(log_file_path: str, error_log_file_path: str) -> Queue
 
     listener.start()
 
-    return log_queue
+    return log_queue, listener
 
 def setup_worker_logging(rank: int, log_queue: Queue):
     """

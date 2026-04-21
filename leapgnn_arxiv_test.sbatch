@@ -1,60 +1,62 @@
 #!/bin/bash
-#SBATCH --job-name=leapgnn_arxiv_2nodes
+#SBATCH --job-name=leapgnn_cpu_2nodes
+#SBATCH --partition=shared
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=1
-#SBATCH --gpus-per-node=1
-#SBATCH --time=01:00:00
-#SBATCH --output=leapgnn_arxiv_%j.log
-#SBATCH --error=leapgnn_arxiv_%j.err
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=16G
+#SBATCH --time=06:00:00
+#SBATCH --output=leapgnn_cpu_%j.log
+#SBATCH --error=leapgnn_cpu_%j.err
 
-# ====================== CENTRAL CONDA FIX ======================
-source /data/anaconda3/etc/profile.d/conda.sh
-conda activate /data/shrashank/conda_envs/leapgnn
-# ============================================================
+set -euo pipefail
 
-module load gcc-9.3.0
-module load cuda-11.8
+module purge
+module load compiler/gcc/9.5.0
 
-echo "=== LeapGNN OGBn-Arxiv Test Started (2-Node Distributed) ==="
-echo "Hostname      : $(hostname)"
-echo "Node ID       : $SLURM_NODEID"
-echo "GPU           : $(nvidia-smi --query-gpu=name --format=csv,noheader)"
-echo "Python        : $(which python)"
-echo "Python version: $(python --version)"
-echo "================================================="
+# repo path
+export WORKSPACE="/scratch/vishweshj_iitbhilai/shrashank/framework/LeapGNN-AE"
 
-# Setup master address for distributed training
-export MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1)
+# Use env directly (no conda activate needed)
+export CONDA_ENV="/scratch/vishweshj_iitbhilai/shrashank/conda/leapgnn"
+export PATH="${CONDA_ENV}/bin:${PATH}"
+export PYTHONNOUSERSITE=1
+
+cd "$WORKSPACE"
+
+echo "=== CPU 2-node LeapGNN run ==="
+echo "Submit dir: $SLURM_SUBMIT_DIR"
+echo "Workspace : $WORKSPACE"
+echo "Python    : $(which python)"
+echo "Version   : $(python --version)"
+echo "Nodes     : $SLURM_JOB_NODELIST"
+echo "===================================="
+
+export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT=29500
-echo "Master Address: $MASTER_ADDR"
-echo "Master Port   : $MASTER_PORT"
-echo "================================================="
 
-cd /data/shrashank/leapgnn/LeapGNN-AE
+echo "MASTER_ADDR=$MASTER_ADDR"
+echo "MASTER_PORT=$MASTER_PORT"
+echo "===================================="
 
-echo "=== Starting Training on Both Nodes at $(date) ==="
-echo "Job ID: $SLURM_JOB_ID"
-echo "Node List: $SLURM_JOB_NODELIST"  
-echo "Master: $MASTER_ADDR:29500"
-echo "Model: graphsage"
-echo "================================================="
+# FAST sanity parameters for CPU (adjust later)
+EPOCHS=2
+BATCH=64
+SAMPLING="2-2"
+HIDDEN=64
+WORKERS=1
 
-# Use srun to launch on both nodes with proper rank assignment
 srun -N 2 --ntasks=2 --ntasks-per-node=1 --unbuffered \
-    bash -c 'python dgl_single.py \
-        --world-size 2 \
-        --rank $SLURM_PROCID \
-        --dist-url "tcp://'$MASTER_ADDR':29500" \
-        --dataset ogbn_arxiv0 \
-        --batch-size 1024 \
-        --sampling 25-25 \
-        --epoch 20 \
-        --hidden-size 256 \
-        --model graphsage \
-        --lr 0.0001 \
-        --log \
-        --eval'
-
-TRAIN_EXIT=$?
-echo "=== Training Finished at $(date) with exit code $TRAIN_EXIT ==="
-
+  bash -c "python dgl_single.py \
+    --world-size 2 \
+    --rank \$SLURM_PROCID \
+    --dist-url tcp://$MASTER_ADDR:$MASTER_PORT \
+    --dataset ogbn_arxiv0 \
+    --model graphsage \
+    --epoch $EPOCHS \
+    --batch-size $BATCH \
+    --sampling $SAMPLING \
+    --hidden-size $HIDDEN \
+    --num-worker $WORKERS \
+    --lr 0.001 \
+    --log"
